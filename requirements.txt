@@ -1,6 +1,6 @@
 streamlit==1.38.0
 spacy==3.7.5
-numpy==1.23.5
+numpy
 thinc==8.2.5
 pymupdf
 reportlab
