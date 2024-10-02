@@ -4,4 +4,4 @@ numpy
 thinc==8.2.5
 pymupdf
 reportlab
-en-core-web-sm
+
