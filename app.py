@@ -7,8 +7,12 @@ import fitz  # PyMuPDF for PDF extraction
 from io import BytesIO
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-if not os.path.exists("en_core_web_sm"):
-    spacy.cli.download("en_core_web_sm")
+try:
+    nlp = spacy.load("en_core_web_sm")
+except OSError:
+    with st.spinner("Downloading SpaCy model..."):
+        spacy.cli.download("en_core_web_sm")
+    nlp = spacy.load("en_core_web_sm")
     
 # Load SpaCy model
 nlp = spacy.load('en_core_web_sm')
