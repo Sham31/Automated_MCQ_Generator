@@ -1,172 +1,142 @@
-import os
+# Install in terminal one by one
+# pip install flask-bootstrap
+# pip install flask
+# pip install spacy
+# pip install PyPDF2
 
+from flask import Flask, render_template, request,make_response
+from flask_bootstrap import Bootstrap
 import spacy
+from collections import Counter
 import random
-import streamlit as st
-import fitz  # PyMuPDF for PDF extraction
-from io import BytesIO
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    with st.spinner("Downloading SpaCy model..."):
-        spacy.cli.download("en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm")
-    
-# Load SpaCy model
-nlp = spacy.load('en_core_web_sm')
+import PyPDF2
+from PyPDF2 import PdfReader,PdfWriter  # Import PdfReader
 
-# Function to extract text from PDF
-def extract_text_from_pdf(pdf_file):
-    pdf_document = fitz.open(stream=pdf_file.read(), filetype="pdf")
-    text = ""
-    for page_num in range(len(pdf_document)):
-        page = pdf_document.load_page(page_num)
-        text += page.get_text()
-    return text
 
-# Function to generate MCQs
+app = Flask(__name__)
+Bootstrap(app)
+
+# Load English tokenizer, tagger, parser, NER, and word vectors
+nlp = spacy.load("en_core_web_sm")
+
 def generate_mcqs(text, num_questions=5):
-    doc = nlp(text)
-    sentences = [sentence.text for sentence in doc.sents]
-    selected_sentences = random.sample(sentences, min(num_questions, len(sentences)))
+    # text = clean_text(text)
+    if text is None:
+        return []
 
+    # Process the text with spaCy
+    doc = nlp(text)
+
+    # Extract sentences from the text
+    sentences = [sent.text for sent in doc.sents]
+
+    # Ensure that the number of questions does not exceed the number of sentences
+    num_questions = min(num_questions, len(sentences))
+
+    # Randomly select sentences to form questions
+    selected_sentences = random.sample(sentences, num_questions)
+
+    # Initialize list to store generated MCQs
     mcqs = []
+
+    # Generate MCQs for each selected sentence
     for sentence in selected_sentences:
+        # Process the sentence with spaCy
         sent_doc = nlp(sentence)
+
+        # Extract entities (nouns) from the sentence
         nouns = [token.text for token in sent_doc if token.pos_ == "NOUN"]
-        if not nouns:  # Handle cases with no nouns
+
+        # Ensure there are enough nouns to generate MCQs
+        if len(nouns) < 2:
             continue
 
-        subject = nouns[0]
-        question_stem = sentence.replace(subject, "_______")
-        answer_choices = [subject]
+        # Count the occurrence of each noun
+        noun_counts = Counter(nouns)
 
-        all_tokens = [token.text for token in doc if token.pos_ in ["NOUN", "PROPN", "ADJ"] and token.text != subject]
-        distractors = list(set(all_tokens) - set(answer_choices))
+        # Select the most common noun as the subject of the question
+        if noun_counts:
+            subject = noun_counts.most_common(1)[0][0]
 
-        while len(distractors) < 3:
-            distractors.append("[Distractor]")
+            # Generate the question stem
+            question_stem = sentence.replace(subject, "______")
 
-        random.shuffle(distractors)
-        distractors = distractors[:3]
+            # Generate answer choices
+            answer_choices = [subject]
 
-        answer_choices.extend(distractors)
-        random.shuffle(answer_choices)
+            # Add some random words from the text as distractors
+            distractors = list(set(nouns) - {subject})
 
-        correct_answer = chr(65 + answer_choices.index(subject))
-        mcqs.append((question_stem, answer_choices, correct_answer))
+            # Ensure there are at least three distractors
+            while len(distractors) < 3:
+                distractors.append("[Distractor]")  # Placeholder for missing distractors
+
+            random.shuffle(distractors)
+            for distractor in distractors[:3]:
+                answer_choices.append(distractor)
+
+            # Shuffle the answer choices
+            random.shuffle(answer_choices)
+
+            # Append the generated MCQ to the list
+            correct_answer = chr(64 + answer_choices.index(subject) + 1)  # Convert index to letter
+            mcqs.append((question_stem, answer_choices, correct_answer))
 
     return mcqs
 
-# Function to create a text file from MCQs
-def create_text(mcqs):
-    text_content = ""
-    for idx, (question, choices, correct_answer) in enumerate(mcqs):
-        text_content += f"Q{idx+1}: {question}\n"
-        for i, choice in enumerate(choices):
-            text_content += f"    {chr(65+i)}. {choice}\n"
-        text_content += f"Correct Answer: {correct_answer}\n\n"
-    return text_content
-
-# Initialize Session State for tracking user answers
-if "user_answers" not in st.session_state:
-    st.session_state.user_answers = {}
-
-if "check_clicked" not in st.session_state:
-    st.session_state.check_clicked = False
-
-if "mcqs" not in st.session_state:
-    st.session_state.mcqs = []
-
-# Sidebar for navigation
-st.sidebar.title("Navigation")
-st.sidebar.header("Instructions")
-st.sidebar.write("1. Upload a PDF file to extract text.")
-st.sidebar.write("2. Select the difficulty level and the number of questions.")
-st.sidebar.write("3. Generate MCQs and check your answers.")
-st.sidebar.write("4. Download the MCQs as a PDF or text file.")
-
-# Sidebar options for settings
-st.sidebar.header("Settings")
-difficulty = st.sidebar.selectbox("Select difficulty level", options=["Easy", "Medium", "Hard"])
-num_questions = st.sidebar.selectbox("Select number of questions", options=list(range(1, 11)), index=4)
-
-# Streamlit UI for PDF upload
-st.title("Enhanced PDF to MCQ Generator")
-uploaded_file = st.file_uploader("Upload a PDF file", type="pdf")
-
-if uploaded_file is not None:
-    with st.spinner("Extracting text from PDF..."):
-        pdf_text = extract_text_from_pdf(uploaded_file)
-
-    st.subheader("Extracted Text")
-    st.write(pdf_text[:2000])  # Display the first 2000 characters
-
-    # Generate MCQs Button
-    if st.button("Generate MCQs"):
-        with st.spinner("Generating MCQs..."):
-            mcqs = generate_mcqs(pdf_text, num_questions)
-            st.session_state.mcqs = mcqs
-            st.session_state.user_answers = {idx: None for idx in range(len(mcqs))}
-            st.session_state.check_clicked = False  # Reset check flag
 
 
-    # MCQ Display
-    if "mcqs" in st.session_state:
-        mcqs = st.session_state.mcqs
-        st.subheader("Generated MCQs")
 
-        for idx, (question, choices, correct_answer) in enumerate(mcqs):
-            st.write(f"**Q{idx + 1}.** {question}")
 
-            # Add a placeholder to the choices
-            choices_with_placeholder = ["Select an answer"] + choices
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        text = ""
 
-            # Store the user's selected answer in session state
-            user_answer = st.radio(
-                f"Choose an option for Q{idx + 1}:",
-                choices_with_placeholder,
-                index=0 if st.session_state.user_answers[idx] is None else choices_with_placeholder.index(
-                    st.session_state.user_answers[idx]),
-                key=f"radio_{idx}"
-            )
+        # Check if files were uploaded
+        if 'files[]' in request.files:
+            files = request.files.getlist('files[]')
+            for file in files:
+                if file.filename.endswith('.pdf'):
+                    # Process PDF file
+                    text += process_pdf(file)
+                elif file.filename.endswith('.txt'):
+                    # Process text file
+                    text += file.read().decode('utf-8')
+        else:
+            # Process manual input
+            text = request.form['text']
 
-            # Update user answers directly after radio selection
-            st.session_state.user_answers[idx] = user_answer
+        # Get the selected number of questions from the dropdown menu
+        num_questions = int(request.form['num_questions'])
 
-        # Check Answers Button
-        if st.button("Check Answers"):
-            st.session_state.check_clicked = True
+        mcqs = generate_mcqs(text, num_questions=num_questions)  # Pass the selected number of questions
+        print(mcqs)
+        # Ensure each MCQ is formatted correctly as (question_stem, answer_choices, correct_answer)
+        mcqs_with_index = [(i + 1, mcq) for i, mcq in enumerate(mcqs)]
+        return render_template('mcqs.html', mcqs=mcqs_with_index)
 
-        # Show Results
-        if st.session_state.check_clicked:
-            st.subheader("Results")
-            correct_count = 0
-            for idx, (question, choices, correct_answer) in enumerate(mcqs):
-                st.write(f"**Q{idx + 1}.** {question}")
-                selected_answer = st.session_state.user_answers[idx]
+    return render_template('index.html')
 
-                if selected_answer == "Select an answer" or selected_answer is None:
-                    st.write(f"⚠️ **No option selected for this question!**")
-                else:
-                    correct_answer_text = \
-                    [choice for choice in choices if chr(65 + choices.index(choice)) == correct_answer][0]
-                    if selected_answer == correct_answer_text:
-                        st.write("✅ **Correct!**")
-                        correct_count += 1
-                    else:
-                        st.write(f"❌ **Wrong!** The correct answer is **{correct_answer_text}**.")
-                st.write("---")
-            st.write(f"Your score: {correct_count}/{len(mcqs)}")
 
-        # Download MCQs as Text
-        st.subheader("Download MCQs")
-        text_content = create_text(st.session_state.mcqs)
-        st.download_button(
-            label="Download as Text",
-            data=text_content,
-            file_name="mcqs.txt",
-            mime="text/plain"
-        )
+
+
+def process_pdf(file):
+    # Initialize an empty string to store the extracted text
+    text = ""
+
+    # Create a PyPDF2 PdfReader object
+    pdf_reader = PdfReader(file)
+
+    # Loop through each page of the PDF
+    for page_num in range(len(pdf_reader.pages)):
+        # Extract text from the current page
+        page_text = pdf_reader.pages[page_num].extract_text()
+        # Append the extracted text to the overall text
+        text += page_text
+
+    return text
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
